@@ -87,10 +87,10 @@ void * handle_tcp_mes( void *arg )
         else if(ret==0)
         {//socket正常关闭
             rs=0;
-            //printf("%s", recvBuf);
+            printf("%s", recvBuf);
         }
-        //else
-            //printf("%s", recvBuf);
+        else
+            printf("%s", recvBuf);
 
         //需要再次读取
         if(ret==sizeof(recvBuf))
@@ -102,9 +102,9 @@ void * handle_tcp_mes( void *arg )
     if(ret>0)
     {//服务器回复消息并关闭scket
         char buf[1000] = {0};
-        sprintf(buf,"HTTP/1.0 200 OK\r\nContent-type: text/plain\r\n\r\n%s","Hello world!\n");
+        sprintf(buf,"hello! I am epoll_server.");
         send( fd, buf, strlen(buf), 0 );
-        close(fd);
+        //close(fd);
     }
     return NULL;
 }
