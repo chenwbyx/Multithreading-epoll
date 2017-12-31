@@ -3,10 +3,10 @@
 #include <string.h>
 #include "cJSON.h"
 
-void create_udp_pacage(char * pack, char *ip, char *mac)
+void create_udp_package(char * pack, char *ip, char *mac)
 {
     pack[0]='\0';
-    strcat(pack,"{\"ip\":\"");
+    strcat(pack,"{\"IP\":\"");
     strcat(pack,ip);
     strcat(pack,"\",\"MAC\":\"");
     strcat(pack,mac);

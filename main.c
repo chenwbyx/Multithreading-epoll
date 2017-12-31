@@ -1,6 +1,8 @@
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/ioctl.h>
 #include <netinet/in.h>
+#include <net/if.h>
 #include <arpa/inet.h>
 #include <assert.h>
 #include <stdio.h>
@@ -12,11 +14,16 @@
 #include <sys/epoll.h>
 #include <pthread.h>
 #include "thread_pool.h"
+#include "pack_JSON.h"
 
 #define MAX_EVENT_NUMBER 1024
 #define TCP_BUFFER_SIZE 512
 #define UDP_BUFFER_SIZE 1024
 #define THREAD_NUMBER 10
+#define IP_LEN 16
+#define MAC_LEN 18
+#define UDP_PACKAGE_LEN 55
+#define ETH_NAME "ens33" //网卡名字
 
 int setnonblocking( int fd )
 {//设置非阻塞
@@ -35,34 +42,69 @@ void addfd( int epollfd, int fd )
     setnonblocking( fd );
 }
 
-void * handle_tcp_mes( void *arg )
-{
-    int ret=0,sockfd=(long)arg;
-    char buf[ TCP_BUFFER_SIZE ];
-    while( 1 )
+void get_ip_mac( char *ip,char *mac,int len_limit)
+{//获取网卡ip地址和mac地址
+    int   sock;
+    struct   sockaddr_in   sin;
+    struct   ifreq   ifr;
+
+    sock   =   socket(AF_INET,   SOCK_DGRAM,   0);
+    if   (sock   ==   -1)
+    assert( sock >= 0 );
+
+    strncpy(ifr.ifr_name,   ETH_NAME,   IFNAMSIZ);
+    ifr.ifr_name[IFNAMSIZ   -   1]   =   0;
+
+    if   (ioctl(sock,   SIOCGIFADDR,   &ifr)   ==  0)  //获取ip
     {
-        memset( buf, '\0', TCP_BUFFER_SIZE );
-        ret = recv( sockfd, buf, TCP_BUFFER_SIZE-1, 0 );
-        if( ret < 0 )
+        memcpy(&sin,   &ifr.ifr_addr,   sizeof(sin));
+        strcpy(ip,inet_ntoa(sin.sin_addr));
+        //fprintf(stdout,   "eth0:   %s\n",   inet_ntoa(sin.sin_addr));
+    }
+    if( ioctl( sock, SIOCGIFHWADDR, &ifr ) == 0 )   //获取mac
+    {
+        snprintf ( mac, len_limit, "%X:%X:%X:%X:%X:%X", (unsigned char) ifr.ifr_hwaddr.sa_data[0],
+                (unsigned char) ifr.ifr_hwaddr.sa_data[1], (unsigned char) ifr.ifr_hwaddr.sa_data[2],
+                (unsigned char) ifr.ifr_hwaddr.sa_data[3], (unsigned char) ifr.ifr_hwaddr.sa_data[4],
+                (unsigned char) ifr.ifr_hwaddr.sa_data[5] );
+        //printf( "adapter hardware address %x:%x:%x:%x:%x:%x\n",arp[0], arp[1], arp[2], arp[3], arp[4], arp[5] );
+    }
+}
+
+void * handle_tcp_mes( void *arg )
+{//处理任务
+    int rs=1,ret=999,fd=(long)arg;
+    char recvBuf[TCP_BUFFER_SIZE];
+    while(rs)
+    {
+        printf("received tcp message: \n");
+        ret=recv(fd,recvBuf,TCP_BUFFER_SIZE,0);
+        if(ret<0)
         {
-            //数据接受完毕之后进入下一次可读事件
-            if( ( errno == EAGAIN ) || ( errno == EWOULDBLOCK ) )
-            {
-                break;
-            }
-            close( sockfd );
-            break;
+            if(errno==EAGAIN){printf("EAGAIN\n");break;}//缓冲区无数据
+            else {printf("recv error!\n");close(fd);break;}
         }
-        //服务端已经断开连接，所以断开客户端连接
-        else if( ret == 0 )
-        {
-            close( sockfd );
+        else if(ret==0)
+        {//socket正常关闭
+            rs=0;
+            //printf("%s", recvBuf);
         }
+        //else
+            //printf("%s", recvBuf);
+
+        //需要再次读取
+        if(ret==sizeof(recvBuf))
+            rs=1;
         else
-        {
-            printf("received tcp message: %s\n", buf);
-            send( sockfd, buf, ret, 0 );
-        }
+            rs=0;
+    }
+    printf("\n");
+    if(ret>0)
+    {//服务器回复消息并关闭scket
+        char buf[1000] = {0};
+        sprintf(buf,"HTTP/1.0 200 OK\r\nContent-type: text/plain\r\n\r\n%s","Hello world!\n");
+        send( fd, buf, strlen(buf), 0 );
+        close(fd);
     }
     return NULL;
 }
@@ -79,6 +121,9 @@ int main( int argc, char* argv[] )
     //创建线程池
     thread_pool_t pool;
     pool=thread_pool_create(THREAD_NUMBER);
+
+    char pack_mes[UDP_PACKAGE_LEN],pack_ip[IP_LEN];
+    char pack_mac[MAC_LEN];
 
     int ret = 0;
     //创建tcp套接字，并绑定 、监听
@@ -147,10 +192,12 @@ int main( int argc, char* argv[] )
                 socklen_t client_addrlength = sizeof( client_address );
 
                 ret = recvfrom( udpfd, buf, UDP_BUFFER_SIZE-1, 0, ( struct sockaddr* )&client_address, &client_addrlength );
-                printf("received udp message: %s\n", buf);
+                printf("received udp message from %s : \n %s\n", inet_ntoa(client_address.sin_addr),buf);
                 if( ret > 0 )
                 {
-                    sendto( udpfd, buf, UDP_BUFFER_SIZE-1, 0, ( struct sockaddr* )&client_address, client_addrlength );
+                    get_ip_mac( pack_ip,pack_mac,sizeof(pack_mac) );
+                    create_udp_package( pack_mes, pack_ip, pack_mac );
+                    sendto( udpfd, pack_mes, sizeof(pack_mes), 0, ( struct sockaddr* )&client_address, client_addrlength );
                 }
             }
             //注册的socket发生可读事件
@@ -165,8 +212,6 @@ int main( int argc, char* argv[] )
             }
         }
     }
-
     close( listenfd );
     return 0;
 }
-
