@@ -12,7 +12,7 @@ void create_udp_package(char * pack, char *ip, char *mac)
     strcat(pack,mac);
     strcat(pack,"\"}");
 }
-void dis_udp_pacage(char * pack, char *ip, char *mac)
+void dis_udp_package(char * pack, char *ip, char *mac)
 {
     cJSON *json , *json_value , *json_timestamp;
     json = cJSON_Parse(pack);
@@ -22,10 +22,10 @@ void dis_udp_pacage(char * pack, char *ip, char *mac)
     {
         json_value = cJSON_GetObjectItem( json , "MAC");
         if( json_value->type == cJSON_String )
-            strcpy(ip,json_value->valuestring);
-        json_timestamp = cJSON_GetObjectItem( json , "ip");
+            strcpy(mac,json_value->valuestring);
+        json_timestamp = cJSON_GetObjectItem( json , "IP");
         if( json_timestamp->type == cJSON_String )
-            strcpy(mac,json_timestamp->valuestring);
+            strcpy(ip,json_timestamp->valuestring);
         cJSON_Delete(json);
     }
 }
