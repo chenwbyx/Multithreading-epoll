@@ -15,6 +15,7 @@
 #include <pthread.h>
 #include "thread_pool.h"
 #include "pack_JSON.h"
+#include "heart.h"
 
 #define MAX_EVENT_NUMBER 1024
 #define TCP_BUFFER_SIZE 512
@@ -24,6 +25,8 @@
 #define MAC_LEN 18
 #define UDP_PACKAGE_LEN 55
 #define ETH_NAME "ens33" //网卡名字
+
+extern s_t *s_head;
 
 int setnonblocking( int fd )
 {//设置非阻塞
@@ -77,20 +80,26 @@ void * handle_tcp_mes( void *arg )
     char recvBuf[TCP_BUFFER_SIZE];
     while(rs)
     {
-        printf("received tcp message: \n");
+		recvBuf[0]='\0';
         ret=recv(fd,recvBuf,TCP_BUFFER_SIZE,0);
+        heart_handler(fd, recvBuf);
         if(ret<0)
         {
             if(errno==EAGAIN){printf("EAGAIN\n");break;}//缓冲区无数据
-            else {printf("recv error!\n");close(fd);break;}
+            else
+            {
+                printf("recv error!\n");
+                send( fd, "ipmac", strlen("ipmac"), 0 );
+                close(fd);
+                break;
+            }
         }
         else if(ret==0)
         {//socket正常关闭
             rs=0;
-            printf("%s", recvBuf);
         }
         else
-            printf("%s", recvBuf);
+            printf("received tcp message: %s \n", recvBuf);
 
         //需要再次读取
         if(ret==sizeof(recvBuf))
@@ -98,12 +107,24 @@ void * handle_tcp_mes( void *arg )
         else
             rs=0;
     }
-    printf("\n");
     if(ret>0)
     {//服务器回复消息并关闭scket
-        char buf[1000] = {0};
-        sprintf(buf,"hello! I am epoll_server.");
-        send( fd, buf, strlen(buf), 0 );
+
+        recvBuf[5]='\0';
+        if(strcmp(recvBuf,"short")!=0)
+        {
+            char buf[1000] = {0};
+            sprintf(buf,"hello! I am epoll_server.");
+            send( fd, buf, strlen(buf), 0 );
+        }
+        else
+        {
+            char pack_mes[UDP_PACKAGE_LEN],pack_ip[IP_LEN],pack_mac[MAC_LEN];
+            get_ip_mac( pack_ip,pack_mac,sizeof(pack_mac) );
+            create_udp_package( pack_mes, pack_ip, pack_mac );
+            send( fd, pack_mes, strlen(pack_mes), 0 );
+        }
+
         //close(fd);
     }
     return NULL;
@@ -117,10 +138,16 @@ int main( int argc, char* argv[] )
         return 1;
     }
     const char* ip = argv[1];
-    int port = atoi( argv[2] );
+    int port_1 = atoi( argv[2] );
+    int port_2 = atoi( argv[3] );
     //创建线程池
     thread_pool_t pool;
     pool=thread_pool_create(THREAD_NUMBER);
+
+    //启动心跳检测线程
+    pthread_t pth1;
+    init_shead();
+    pthread_create(&pth1, NULL, heart_check, (void *)0) ;
 
     char pack_mes[UDP_PACKAGE_LEN],pack_ip[IP_LEN];
     char pack_mac[MAC_LEN];
@@ -131,7 +158,7 @@ int main( int argc, char* argv[] )
     bzero( &address, sizeof( address ) );
     address.sin_family = AF_INET;
     inet_pton( AF_INET, ip, &address.sin_addr );
-    address.sin_port = htons( port );
+    address.sin_port = htons( port_1 );
 
     int listenfd = socket( PF_INET, SOCK_STREAM, 0 );
     assert( listenfd >= 0 );
@@ -145,11 +172,15 @@ int main( int argc, char* argv[] )
     bzero( &address, sizeof( address ) );
     address.sin_family = AF_INET;
     inet_pton( AF_INET, ip, &address.sin_addr );
-    address.sin_port = htons( port );
-    int udpfd = socket( PF_INET, SOCK_DGRAM, 0 );
-    assert( udpfd >= 0 );
+    address.sin_port = htons( port_2 );
 
-    ret = bind( udpfd, ( struct sockaddr* )&address, sizeof( address ) );
+    int listenfd_1 = socket( PF_INET, SOCK_STREAM, 0 );
+    assert( listenfd_1 >= 0 );
+
+    ret = bind( listenfd_1, ( struct sockaddr* )&address, sizeof( address ) );
+    assert( ret != -1 );
+
+    ret = listen( listenfd_1, 5 );
     assert( ret != -1 );
 
     struct epoll_event events[ MAX_EVENT_NUMBER ];
@@ -157,7 +188,7 @@ int main( int argc, char* argv[] )
     assert( epollfd != -1 );
     //注册tcp和udp套接字的可读事件
     addfd( epollfd, listenfd );
-    addfd( epollfd, udpfd );
+    addfd( epollfd, listenfd_1 );
 
     while( 1 )
     {
@@ -172,7 +203,6 @@ int main( int argc, char* argv[] )
         for (i = 0; i < number; i++ )
         {
             int sockfd = events[i].data.fd;
-
             if ( sockfd == listenfd )
             {
             	//tcp有新的可读事件，也即接受到了新的连接
@@ -181,24 +211,24 @@ int main( int argc, char* argv[] )
                 int connfd = accept( listenfd, ( struct sockaddr* )&client_address, &client_addrlength );
                 //将新的连接套接字也注册可读事件
                 addfd( epollfd, connfd );
+
+                s_t *p = (s_t *)malloc(sizeof(s_t)), *q;
+                strcpy(p->name, inet_ntoa(client_address.sin_addr));
+                p->sockfd = sockfd;
+                p->count = 0;
+                q = s_head->next;
+                s_head->next = p;
+                p->next = q;
             }
 
-            else if ( sockfd == udpfd )
+            else if ( sockfd == listenfd_1 )
             {
-            	//udp套接字事件处理
-                char buf[ UDP_BUFFER_SIZE ];
-                memset( buf, '\0', UDP_BUFFER_SIZE );
                 struct sockaddr_in client_address;
                 socklen_t client_addrlength = sizeof( client_address );
+                int connfd = accept( listenfd_1, ( struct sockaddr* )&client_address, &client_addrlength );
+                //将新的连接套接字也注册可读事件
+                addfd( epollfd, connfd );
 
-                ret = recvfrom( udpfd, buf, UDP_BUFFER_SIZE-1, 0, ( struct sockaddr* )&client_address, &client_addrlength );
-                printf("received udp message from %s : \n %s\n", inet_ntoa(client_address.sin_addr),buf);
-                if( ret > 0 )
-                {
-                    get_ip_mac( pack_ip,pack_mac,sizeof(pack_mac) );
-                    create_udp_package( pack_mes, pack_ip, pack_mac );
-                    sendto( udpfd, pack_mes, sizeof(pack_mes), 0, ( struct sockaddr* )&client_address, client_addrlength );
-                }
             }
             //注册的socket发生可读事件
             else if ( events[i].events & EPOLLIN )
@@ -212,6 +242,7 @@ int main( int argc, char* argv[] )
             }
         }
     }
+    thread_pool_destroy( pool ); //释放线程池
     close( listenfd );
     return 0;
 }
