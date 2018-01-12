@@ -13,7 +13,7 @@ in_addr_t inet_addr(const char *cp);
 
 int main(int argc, char **argv)
 {
-    if (argc != 3)
+    if (argc != 4)
     {
         printf("Usage: %s ip port message\n", argv[0]);
         exit(1);
@@ -43,9 +43,9 @@ int main(int argc, char **argv)
         close(sock);
     }
     char buff[512];
-    for(i=0;i<KEEPALIVE_TIME;i+=10)
+    for(i=0;i<KEEPALIVE_TIME;i+=HEARTBEAT_TIME)
     {
-        n = send(sock, "Hello!", strlen("Hello!"), 0);
+        n = send(sock, argv[3], strlen(argv[3]), 0);
         if (n < 0)
         {
             perror("sendto");
@@ -63,12 +63,12 @@ int main(int argc, char **argv)
             printf("server closed\n");
             close(sock);
         }
-        sleep(10);
+        sleep(3);
     }
     if (n == -1)
     {
         perror("recv");
-        close(sock);
+        //close(sock);
     }
     return 0;
 }
