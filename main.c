@@ -24,7 +24,7 @@
 #define IP_LEN 16
 #define MAC_LEN 18
 #define UDP_PACKAGE_LEN 55
-#define ETH_NAME "ens33" //网卡名字
+#define ETH_NAME "eth0" //网卡名字
 
 extern s_t *s_head;
 
@@ -80,7 +80,8 @@ void * handle_tcp_mes( void *arg )
     char recvBuf[TCP_BUFFER_SIZE];
     while(rs)
     {
-		recvBuf[0]='\0';
+		//recvBuf[0]='\0';
+	memset(recvBuf,'\0',sizeof(recvBuf));
         ret=recv(fd,recvBuf,TCP_BUFFER_SIZE,0);
         heart_handler(fd, recvBuf);
         if(ret<0)
@@ -244,5 +245,6 @@ int main( int argc, char* argv[] )
     }
     thread_pool_destroy( pool ); //释放线程池
     close( listenfd );
+    close( listenfd_1 );
     return 0;
 }
