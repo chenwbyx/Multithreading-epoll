@@ -1,4 +1,4 @@
-Multithreading-epoll，一个基于多线程的TCP/UDP的服务器
+Multithreading-epoll，一个基于epoll的多线程服务器
 ===
 >Design and maintenance by chenwenbo.
 * 基于epoll，监听指定端口的TCP请求；
